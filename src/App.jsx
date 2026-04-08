@@ -8,21 +8,23 @@ import {
   Link2
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot, collection } from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  onSnapshot, 
+  collection 
+} from 'firebase/firestore';
 
-// --- 사용자님의 Firebase 설정 (그대로 유지됨) ---
-const firebaseConfig = {
-  apiKey: "AIzaSyBdPKMbJpAgnngJOCop8ySliTs4IEBoDHs",
-  authDomain: "sroong-planner.firebaseapp.com",
-  projectId: "sroong-planner",
-  storageBucket: "sroong-planner.firebasestorage.app",
-  messagingSenderId: "685280831568",
-  appId: "1:685280831568:web:3b0afe4124ab5c448a4955",
-  measurementId: "G-YYF96KTL87"
-};
-
-const appId = 'srung-planner-sync';
+// --- 환경 변수 및 초기 설정 ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'srung-planner-sync';
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -30,11 +32,32 @@ const db = getFirestore(app);
 const DAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
 export default function App() {
+  const [user, setUser] = useState(null);
   const [syncKey, setSyncKey] = useState(localStorage.getItem('srung_sync_key') || '');
   const [showSettings, setShowSettings] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [plannerData, setPlannerData] = useState({});
   const [isDataLoading, setIsDataLoading] = useState(false);
+
+  // 1. 인증 설정 (Rule 3 준수)
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("인증 실패:", err);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const dateKey = useMemo(() => {
     const year = currentDate.getFullYear();
@@ -43,29 +66,31 @@ export default function App() {
     return `${year}-${month}-${day}`;
   }, [currentDate]);
 
-  // 실시간 동기화 로직 (입력창이 사라지지 않도록 전체 화면 로딩 제거)
+  // 2. 실시간 동기화 (Rule 1 & Rule 3 준수)
   useEffect(() => {
-    if (!syncKey || syncKey.length < 2) {
+    // 인증이 완료되지 않았거나 키가 짧으면 실행 안 함
+    if (!user || !syncKey || syncKey.length < 2) {
       setPlannerData({});
       return;
     }
 
     setIsDataLoading(true);
-    const docRef = doc(db, 'artifacts', appId, 'public', 'shared_plans', syncKey);
-    const collRef = collection(docRef, 'days');
+    // Rule 1: /artifacts/{appId}/public/data/{collectionName} 경로 사용
+    // 경로: artifacts -> appId -> public -> data -> shared_plans (Col) -> syncKey (Doc) -> days (Col)
+    const daysCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'shared_plans', syncKey, 'days');
     
-    const unsubscribe = onSnapshot(collRef, (snapshot) => {
+    const unsubscribe = onSnapshot(daysCollectionRef, (snapshot) => {
       const data = {};
       snapshot.forEach(d => { data[d.id] = d.data(); });
       setPlannerData(data);
       setIsDataLoading(false);
     }, (error) => {
-      console.error("동기화 오류:", error);
+      console.error("데이터 로드 오류:", error);
       setIsDataLoading(false);
     });
 
     return () => unsubscribe();
-  }, [syncKey]);
+  }, [user, syncKey]);
 
   const defaultDayData = {
     checkpoint: '',
@@ -77,13 +102,17 @@ export default function App() {
 
   const dayData = plannerData[dateKey] || defaultDayData;
 
+  // 3. 데이터 저장 (Rule 1 & Rule 3 준수)
   const saveToCloud = async (newData) => {
+    if (!user) return;
     if (!syncKey) {
       setPlannerData({ ...plannerData, [dateKey]: newData });
       return;
     }
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'shared_plans', syncKey, 'days', dateKey), newData);
+      // 8개 세그먼트로 구성된 올바른 문서 경로 (짝수)
+      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'shared_plans', syncKey, 'days', dateKey);
+      await setDoc(docRef, newData);
     } catch (err) {
       console.error("저장 실패:", err);
     }
@@ -145,7 +174,7 @@ export default function App() {
           )}
 
           <div className="flex flex-col items-center gap-3">
-            <div className="flex items-center justify-between w-full bg-[#FDF8F8] rounded-xl border border-[#F3E9E9] p-1">
+            <div className="flex items-center justify-between w-full bg-[#FDF8F8] rounded-xl border border-[#F3E9E9] p-1 shadow-inner">
               <button onClick={() => changeDate(-1)} className="p-2 text-[#B48787] active:scale-90 transition-transform"><ChevronLeft size={20} /></button>
               <button onClick={() => setCurrentDate(new Date())} className="font-bold">{dateKey.replace(/-/g, '. ')}.</button>
               <button onClick={() => changeDate(1)} className="p-2 text-[#B48787] active:scale-90 transition-transform"><ChevronRight size={20} /></button>
@@ -158,10 +187,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* --- 내용 영역: 로딩 중일 때만 살짝 흐리게 처리하여 입력창 방해 안 함 --- */}
         <div className={`space-y-4 transition-opacity duration-300 ${isDataLoading ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
-          
-          {/* 체크포인트 (스케줄 위로 이동 완료) */}
           <section className="bg-white rounded-2xl shadow-sm border border-[#E8D6D6] overflow-hidden">
             <div className="bg-[#B48787] py-2 text-center text-white font-bold text-xs tracking-widest">오늘의 체크포인트</div>
             <div className="p-3">
@@ -174,7 +200,6 @@ export default function App() {
             </div>
           </section>
 
-          {/* 스케줄 목록 */}
           <main className="bg-white rounded-2xl shadow-sm border border-[#E8D6D6] overflow-hidden">
             <div className="flex flex-col divide-y divide-[#F3E9E9]">
               {dayData.schedule.map((item, idx) => (
@@ -217,7 +242,6 @@ export default function App() {
           </main>
         </div>
 
-        {/* 하단 로딩 표시 (플로팅) */}
         {isDataLoading && (
           <div className="fixed bottom-6 right-6 bg-white p-3 rounded-full shadow-xl border border-[#E8D6D6]">
             <Infinity size={24} className="text-[#C89B9B] animate-pulse" />
