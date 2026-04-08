@@ -7,7 +7,9 @@ import {
   Settings,
   Link2,
   CloudUpload,
-  Cloud 
+  Cloud,
+  Calendar as CalendarIcon,
+  X
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
 import { 
@@ -21,11 +23,10 @@ import {
   doc, 
   setDoc, 
   onSnapshot, 
-  collection,
-  query
+  collection 
 } from 'firebase/firestore';
 
-// --- 환경 변수 및 초기 설정 (Rule 1 & 3 준수) ---
+// --- 환경 변수 및 초기 설정 ---
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : {
@@ -43,19 +44,23 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const DAYS = ['일', '월', '화', '수', '목', '금', '토'];
+const DAYS_SHORT = ['일', '월', '화', '수', '목', '금', '토'];
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [syncKey, setSyncKey] = useState(localStorage.getItem('srung_sync_key') || '');
   const [showSettings, setShowSettings] = useState(!localStorage.getItem('srung_sync_key'));
+  const [showCalendar, setShowCalendar] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [plannerData, setPlannerData] = useState({});
   const [isDataLoading, setIsDataLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [authError, setAuthError] = useState(null);
 
-  // 1. 인증 설정 (Rule 3: 환경 제공 토큰 우선 사용)
+  // 달력 뷰 상태 (현재 달력에서 보여주는 월)
+  const [viewDate, setViewDate] = useState(new Date());
+
+  // 1. 인증 설정
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -66,7 +71,7 @@ export default function App() {
         }
       } catch (err) {
         console.error("인증 실패:", err);
-        setAuthError("인증 설정에 문제가 발생했습니다. (잠시 후 다시 시도)");
+        setAuthError("인증 설정에 문제가 발생했습니다.");
       }
     };
     initAuth();
@@ -83,7 +88,7 @@ export default function App() {
     return `${year}-${month}-${day}`;
   }, [currentDate]);
 
-  // 2. 실시간 동기화 (Rule 1 & 2 준수: 단순 쿼리 사용)
+  // 2. 실시간 동기화
   useEffect(() => {
     if (!user || !syncKey || syncKey.length < 1) {
       setPlannerData({});
@@ -91,15 +96,11 @@ export default function App() {
     }
 
     setIsDataLoading(true);
-    // Rule 1: /artifacts/{appId}/public/data/{collectionName}
-    // 경로 세그먼트를 짝수로 유지하기 위해 문서 ID 조합 사용
-    const dataCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'planner_storage');
+    const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'planner_storage');
     
-    // 복잡한 쿼리 없이 전체 데이터를 가져와서 메모리에서 필터링 (Rule 2 준수)
-    const unsubscribe = onSnapshot(dataCollectionRef, (snapshot) => {
+    const unsubscribe = onSnapshot(colRef, (snapshot) => {
       const data = {};
       snapshot.forEach(d => {
-        // 문서 ID가 "키_날짜" 형식인 것만 파싱
         if (d.id.startsWith(`${syncKey}_`)) {
           const date = d.id.replace(`${syncKey}_`, '');
           data[date] = d.data();
@@ -127,16 +128,13 @@ export default function App() {
     return plannerData[dateKey] || defaultDayData;
   }, [plannerData, dateKey]);
 
-  // 3. 데이터 저장 (Rule 1: 짝수 세그먼트 경로 보장)
+  // 3. 데이터 저장
   const saveToCloud = async (newData) => {
-    // 낙관적 업데이트: 로컬 상태 즉시 반영
     setPlannerData(prev => ({ ...prev, [dateKey]: newData }));
-
     if (!user || !syncKey) return;
 
     setIsSaving(true);
     try {
-      // 6개 세그먼트로 구성된 경로 (artifacts/appId/public/data/planner_storage/docId)
       const docId = `${syncKey}_${dateKey}`;
       const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'planner_storage', docId);
       await setDoc(docRef, newData);
@@ -160,12 +158,34 @@ export default function App() {
     setCurrentDate(newDate);
   };
 
+  // --- 달력 계산 로직 ---
+  const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+  const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
+
+  const calendarDays = useMemo(() => {
+    const year = viewDate.getFullYear();
+    const month = viewDate.getMonth();
+    const days = [];
+    const firstDay = getFirstDayOfMonth(year, month);
+    const totalDays = getDaysInMonth(year, month);
+
+    for (let i = 0; i < firstDay; i++) days.push(null);
+    for (let i = 1; i <= totalDays; i++) days.push(i);
+    return days;
+  }, [viewDate]);
+
+  const handleDateSelect = (day) => {
+    if (!day) return;
+    const newDate = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
+    setCurrentDate(newDate);
+    setShowCalendar(false);
+  };
+
   return (
-    <div className="min-h-screen bg-[#FDF8F8] text-[#5C4D4D] p-3 font-serif">
+    <div className="min-h-screen bg-[#FDF8F8] text-[#5C4D4D] p-3 font-serif select-none relative">
       <style>{`
         @font-face { font-family: 'RIDIBatang'; src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_twelve@1.0/RIDIBatang.woff') format('woff'); }
         .font-serif { font-family: 'RIDIBatang', serif; }
-        input::placeholder { color: #D4B8B8; font-size: 0.8rem; }
       `}</style>
 
       <div className="max-w-md mx-auto space-y-4 pb-10">
@@ -179,13 +199,16 @@ export default function App() {
             <div className="flex items-center gap-2">
               {syncKey && user && (
                 <div className="flex items-center transition-all duration-300">
-                  {isSaving ? (
-                    <CloudUpload size={18} className="text-blue-400 animate-bounce" />
-                  ) : (
-                    <Cloud size={18} className="text-green-400" />
-                  )}
+                  {isSaving ? <CloudUpload size={18} className="text-blue-400 animate-bounce" /> : <Cloud size={18} className="text-green-400" />}
                 </div>
               )}
+              {/* 달력 버튼 추가됨! */}
+              <button 
+                onClick={() => { setShowCalendar(!showCalendar); setViewDate(currentDate); }}
+                className={`p-2 rounded-full transition-colors ${showCalendar ? 'bg-[#FDF8F8] text-[#C89B9B]' : 'text-gray-300 hover:text-[#C89B9B]'}`}
+              >
+                <CalendarIcon size={20} />
+              </button>
               <button 
                 onClick={() => setShowSettings(!showSettings)} 
                 className={`p-2 rounded-full transition-colors ${showSettings ? 'bg-[#FDF8F8] text-[#C89B9B]' : 'text-gray-300'}`}
@@ -195,17 +218,40 @@ export default function App() {
             </div>
           </div>
 
-          {authError && (
-            <div className="mb-4 p-2 bg-red-50 text-red-500 text-[10px] text-center rounded-lg border border-red-100">
-              {authError}
+          {showCalendar && (
+            <div className="mb-4 p-4 bg-[#FDF8F8] rounded-xl border border-[#E8D6D6] animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center justify-between mb-4">
+                <button onClick={() => setViewDate(new Date(viewDate.setMonth(viewDate.getMonth() - 1)))} className="p-1 text-[#C89B9B]"><ChevronLeft size={18}/></button>
+                <span className="font-bold text-sm text-[#B48787]">{viewDate.getFullYear()}년 {viewDate.getMonth() + 1}월</span>
+                <button onClick={() => setViewDate(new Date(viewDate.setMonth(viewDate.getMonth() + 1)))} className="p-1 text-[#C89B9B]"><ChevronRight size={18}/></button>
+              </div>
+              <div className="grid grid-cols-7 gap-1 mb-2 text-center text-[10px] font-bold text-[#D4B8B8]">
+                {DAYS_SHORT.map(d => <div key={d} className={d === '일' ? 'text-red-400' : d === '토' ? 'text-blue-400' : ''}>{d}</div>)}
+              </div>
+              <div className="grid grid-cols-7 gap-1">
+                {calendarDays.map((day, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleDateSelect(day)}
+                    disabled={!day}
+                    className={`aspect-square text-[11px] rounded-lg transition-all ${!day ? 'invisible' : 'hover:bg-white hover:text-[#C89B9B]'} ${day && new Date(viewDate.getFullYear(), viewDate.getMonth(), day).toDateString() === currentDate.toDateString() ? 'bg-[#C89B9B] text-white font-bold' : ''}`}
+                  >
+                    {day}
+                  </button>
+                ))}
+              </div>
+              <button 
+                onClick={() => { setCurrentDate(new Date()); setShowCalendar(false); }}
+                className="w-full mt-3 py-1.5 bg-white border border-[#E8D6D6] rounded-lg text-[10px] text-[#B48787] font-bold"
+              >
+                오늘로 가기
+              </button>
             </div>
           )}
 
           {showSettings && (
             <div className="mb-4 p-3 bg-[#FDF8F8] rounded-xl border border-dashed border-[#C89B9B] space-y-2 animate-in fade-in slide-in-from-top-1">
-              <p className="text-[10px] text-[#B48787] font-bold flex items-center gap-1">
-                <Link2 size={12} /> 동기화 키 (비밀번호)
-              </p>
+              <p className="text-[10px] text-[#B48787] font-bold flex items-center gap-1"><Link2 size={12} /> 동기화 키</p>
               <input 
                 type="text" 
                 value={syncKey} 
@@ -214,30 +260,27 @@ export default function App() {
                   setSyncKey(val); 
                   localStorage.setItem('srung_sync_key', val); 
                 }} 
-                placeholder="비밀키를 입력하세요" 
-                className="w-full p-2 bg-white border border-[#E8D6D6] rounded-lg text-sm outline-none focus:ring-1 focus:ring-[#C89B9B]" 
+                placeholder="비밀키 입력" 
+                className="w-full p-2 bg-white border border-[#E8D6D6] rounded-lg text-sm outline-none" 
               />
-              <p className="text-[9px] text-[#B48787] text-center italic">키를 바꾸면 해당 키에 저장된 기록이 나타납니다.</p>
             </div>
           )}
 
-          <div className="flex flex-col items-center gap-3">
-            <div className="flex items-center justify-between w-full bg-[#FDF8F8] rounded-xl border border-[#F3E9E9] p-1 shadow-inner">
-              <button onClick={() => changeDate(-1)} className="p-2 text-[#B48787] active:scale-90 transition-transform"><ChevronLeft size={20} /></button>
-              <button onClick={() => setCurrentDate(new Date())} className="font-bold text-[#B48787]">{dateKey.replace(/-/g, '. ')}.</button>
-              <button onClick={() => changeDate(1)} className="p-2 text-[#B48787] active:scale-90 transition-transform"><ChevronRight size={20} /></button>
-            </div>
+          <div className="flex items-center justify-between w-full bg-[#FDF8F8] rounded-xl border border-[#F3E9E9] p-1 shadow-inner">
+            <button onClick={() => changeDate(-1)} className="p-2 text-[#B48787] active:scale-90 transition-transform"><ChevronLeft size={20} /></button>
+            <span className="font-bold text-[#B48787] text-sm">{dateKey.replace(/-/g, '. ')}.</span>
+            <button onClick={() => changeDate(1)} className="p-2 text-[#B48787] active:scale-90 transition-transform"><ChevronRight size={20} /></button>
           </div>
         </header>
 
         <div className={`space-y-4 transition-opacity duration-300 ${isDataLoading ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
           <section className="bg-white rounded-2xl shadow-sm border border-[#E8D6D6] overflow-hidden">
-            <div className="bg-[#B48787] py-2 text-center text-white font-bold text-xs tracking-widest">오늘의 체크포인트</div>
+            <div className="bg-[#B48787] py-2 text-center text-white font-bold text-xs tracking-widest uppercase">Check Point</div>
             <div className="p-3">
               <textarea 
                 value={dayData.checkpoint || ''} 
                 onChange={(e) => saveToCloud({ ...dayData, checkpoint: e.target.value })} 
-                placeholder="오늘의 중요한 메모를 남기세요..." 
+                placeholder="오늘의 중요한 메모..." 
                 className="w-full h-24 p-3 bg-[#FDF8F8] border border-[#F3E9E9] rounded-xl outline-none text-xs resize-none leading-relaxed" 
               />
             </div>
@@ -251,10 +294,10 @@ export default function App() {
                     <div className="w-16 h-7 flex items-center justify-center bg-[#F3E9E9] rounded-md text-[9px] font-bold text-[#B48787] shrink-0 border border-[#E8D6D6]">
                       계획({String(item.time).padStart(2, '0')})
                     </div>
-                    <div className="flex-1 flex items-center gap-2 bg-[#FDF8F8] rounded-md px-2 min-w-0">
+                    <div className="flex-1 flex items-center gap-2 bg-[#FDF8F8] rounded-md px-2 min-w-0 border border-transparent focus-within:border-[#E8D6D6]">
                       <button 
                         onClick={() => updateSchedule(idx, 'checked', !item.checked)} 
-                        className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${item.checked ? 'bg-[#C89B9B] border-[#C89B9B] text-white' : 'border-[#D4B8B8] bg-white'}`}
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${item.checked ? 'bg-[#C89B9B] border-[#C89B9B] text-white shadow-sm' : 'border-[#D4B8B8] bg-white'}`}
                       >
                         {item.checked && <Check size={10} strokeWidth={4} />}
                       </button>
@@ -262,8 +305,8 @@ export default function App() {
                         type="text" 
                         value={item.plan || ''} 
                         onChange={(e) => updateSchedule(idx, 'plan', e.target.value)} 
-                        placeholder="할 일" 
                         className={`w-full py-2 bg-transparent outline-none text-xs font-medium truncate ${item.checked ? 'text-[#B09C9C] line-through' : 'text-[#5C4D4D]'}`} 
+                        placeholder="할 일"
                       />
                     </div>
                   </div>
