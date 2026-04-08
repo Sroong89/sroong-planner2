@@ -11,7 +11,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, collection } from 'firebase/firestore';
 
-// --- 사용자님의 Firebase 설정 (이미 적용되어 있습니다) ---
+// --- 사용자님의 Firebase 설정 (그대로 유지됨) ---
 const firebaseConfig = {
   apiKey: "AIzaSyBdPKMbJpAgnngJOCop8ySliTs4IEBoDHs",
   authDomain: "sroong-planner.firebaseapp.com",
@@ -43,7 +43,7 @@ export default function App() {
     return `${year}-${month}-${day}`;
   }, [currentDate]);
 
-  // 실시간 동기화 (입력 중 화면 튕김 방지 로직 적용)
+  // 실시간 동기화 로직 (입력창이 사라지지 않도록 전체 화면 로딩 제거)
   useEffect(() => {
     if (!syncKey || syncKey.length < 2) {
       setPlannerData({});
@@ -116,7 +116,10 @@ export default function App() {
               <Infinity size={24} className="text-[#C89B9B]" />
               <h1 className="text-xl font-bold text-[#C89B9B]">스룽 플래너</h1>
             </div>
-            <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded-full transition-colors ${syncKey ? 'text-[#C89B9B]' : 'text-gray-300'}`}>
+            <button 
+              onClick={() => setShowSettings(!showSettings)} 
+              className={`p-2 rounded-full transition-colors ${syncKey ? 'text-[#C89B9B]' : 'text-gray-300'}`}
+            >
               <Settings size={20} />
             </button>
           </div>
@@ -124,7 +127,7 @@ export default function App() {
           {(!syncKey || showSettings) && (
             <div className="mb-4 p-3 bg-[#FDF8F8] rounded-xl border border-dashed border-[#C89B9B] space-y-2">
               <p className="text-[10px] text-[#B48787] font-bold flex items-center gap-1">
-                <Link2 size={12} /> 동기화 키 (아이폰과 동일하게)
+                <Link2 size={12} /> 동기화 키 (비밀번호)
               </p>
               <input 
                 type="text" 
@@ -137,14 +140,15 @@ export default function App() {
                 placeholder="비밀키를 입력하세요" 
                 className="w-full p-2 bg-white border border-[#E8D6D6] rounded-lg text-sm outline-none focus:ring-1 focus:ring-[#C89B9B]" 
               />
+              {!syncKey && <p className="text-[9px] text-red-400 text-center">키를 입력해야 데이터가 사라지지 않습니다!</p>}
             </div>
           )}
 
           <div className="flex flex-col items-center gap-3">
-            <div className="flex items-center justify-between w-full bg-[#FDF8F8] rounded-xl border border-[#F3E9E9] p-1 shadow-inner">
-              <button onClick={() => changeDate(-1)} className="p-2 text-[#B48787]"><ChevronLeft size={20} /></button>
+            <div className="flex items-center justify-between w-full bg-[#FDF8F8] rounded-xl border border-[#F3E9E9] p-1">
+              <button onClick={() => changeDate(-1)} className="p-2 text-[#B48787] active:scale-90 transition-transform"><ChevronLeft size={20} /></button>
               <button onClick={() => setCurrentDate(new Date())} className="font-bold">{dateKey.replace(/-/g, '. ')}.</button>
-              <button onClick={() => changeDate(1)} className="p-2 text-[#B48787]"><ChevronRight size={20} /></button>
+              <button onClick={() => changeDate(1)} className="p-2 text-[#B48787] active:scale-90 transition-transform"><ChevronRight size={20} /></button>
             </div>
             <div className="flex justify-around w-full">
               {DAYS.map((day, idx) => (
@@ -154,63 +158,74 @@ export default function App() {
           </div>
         </header>
 
-        {/* --- 체크포인트 섹션 (스케줄 위로 이동 완료) --- */}
-        <section className="bg-white rounded-2xl shadow-sm border border-[#E8D6D6] overflow-hidden">
-          <div className="bg-[#B48787] py-2 text-center text-white font-bold text-xs tracking-widest">오늘의 체크포인트</div>
-          <div className="p-3">
-            <textarea 
-              value={dayData.checkpoint} 
-              onChange={(e) => saveToCloud({ ...dayData, checkpoint: e.target.value })} 
-              placeholder="꼭 기억해야 할 내용들..." 
-              className="w-full h-24 p-3 bg-[#FDF8F8] border border-[#F3E9E9] rounded-xl outline-none text-xs resize-none leading-relaxed" 
-            />
-          </div>
-        </section>
+        {/* --- 내용 영역: 로딩 중일 때만 살짝 흐리게 처리하여 입력창 방해 안 함 --- */}
+        <div className={`space-y-4 transition-opacity duration-300 ${isDataLoading ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
+          
+          {/* 체크포인트 (스케줄 위로 이동 완료) */}
+          <section className="bg-white rounded-2xl shadow-sm border border-[#E8D6D6] overflow-hidden">
+            <div className="bg-[#B48787] py-2 text-center text-white font-bold text-xs tracking-widest">오늘의 체크포인트</div>
+            <div className="p-3">
+              <textarea 
+                value={dayData.checkpoint} 
+                onChange={(e) => saveToCloud({ ...dayData, checkpoint: e.target.value })} 
+                placeholder="꼭 기억해야 할 내용들..." 
+                className="w-full h-24 p-3 bg-[#FDF8F8] border border-[#F3E9E9] rounded-xl outline-none text-xs resize-none leading-relaxed" 
+              />
+            </div>
+          </section>
 
-        {/* --- 스케줄 섹션 --- */}
-        <main className={`bg-white rounded-2xl shadow-sm border border-[#E8D6D6] overflow-hidden transition-opacity duration-300 ${isDataLoading ? 'opacity-50' : 'opacity-100'}`}>
-          <div className="flex flex-col divide-y divide-[#F3E9E9]">
-            {dayData.schedule.map((item, idx) => (
-              <div key={idx} className="p-2 space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <div className="w-16 h-7 flex items-center justify-center bg-[#F3E9E9] rounded-md text-[9px] font-bold text-[#B48787] shrink-0 border border-[#E8D6D6]">
-                    계획({String(item.time).padStart(2, '0')})
+          {/* 스케줄 목록 */}
+          <main className="bg-white rounded-2xl shadow-sm border border-[#E8D6D6] overflow-hidden">
+            <div className="flex flex-col divide-y divide-[#F3E9E9]">
+              {dayData.schedule.map((item, idx) => (
+                <div key={idx} className="p-2 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-16 h-7 flex items-center justify-center bg-[#F3E9E9] rounded-md text-[9px] font-bold text-[#B48787] shrink-0 border border-[#E8D6D6]">
+                      계획({String(item.time).padStart(2, '0')})
+                    </div>
+                    <div className="flex-1 flex items-center gap-2 bg-[#FDF8F8] rounded-md px-2 min-w-0">
+                      <button 
+                        onClick={() => updateSchedule(idx, 'checked', !item.checked)} 
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${item.checked ? 'bg-[#C89B9B] border-[#C89B9B] text-white' : 'border-[#D4B8B8] bg-white'}`}
+                      >
+                        {item.checked && <Check size={10} strokeWidth={4} />}
+                      </button>
+                      <input 
+                        type="text" 
+                        value={item.plan} 
+                        onChange={(e) => updateSchedule(idx, 'plan', e.target.value)} 
+                        placeholder="할 일" 
+                        className={`w-full py-2 bg-transparent outline-none text-xs font-medium truncate ${item.checked ? 'text-[#B09C9C] line-through' : 'text-[#5C4D4D]'}`} 
+                      />
+                    </div>
                   </div>
-                  <div className="flex-1 flex items-center gap-2 bg-[#FDF8F8] rounded-md px-2 min-w-0">
-                    <button 
-                      onClick={() => updateSchedule(idx, 'checked', !item.checked)} 
-                      className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${item.checked ? 'bg-[#C89B9B] border-[#C89B9B] text-white' : 'border-[#D4B8B8] bg-white'}`}
-                    >
-                      {item.checked && <Check size={10} strokeWidth={4} />}
-                    </button>
+                  <div className="flex items-center gap-2">
+                    <div className="w-16 h-7 flex items-center justify-center bg-white border border-[#F3E9E9] rounded-md text-[9px] font-bold text-[#D4B8B8] shrink-0">
+                      실행({String(item.time).padStart(2, '0')})
+                    </div>
                     <input 
                       type="text" 
-                      value={item.plan} 
-                      onChange={(e) => updateSchedule(idx, 'plan', e.target.value)} 
-                      placeholder="할 일" 
-                      className={`w-full py-2 bg-transparent outline-none text-xs font-medium truncate ${item.checked ? 'text-[#B09C9C] line-through' : 'text-[#5C4D4D]'}`} 
+                      value={item.done} 
+                      onChange={(e) => updateSchedule(idx, 'done', e.target.value)} 
+                      placeholder="수행 기록" 
+                      className="flex-1 px-2 py-1 bg-transparent outline-none text-xs text-[#8B7373] italic truncate" 
                     />
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-16 h-7 flex items-center justify-center bg-white border border-[#F3E9E9] rounded-md text-[9px] font-bold text-[#D4B8B8] shrink-0">
-                    실행({String(item.time).padStart(2, '0')})
-                  </div>
-                  <input 
-                    type="text" 
-                    value={item.done} 
-                    onChange={(e) => updateSchedule(idx, 'done', e.target.value)} 
-                    placeholder="수행 기록" 
-                    className="flex-1 px-2 py-1 bg-transparent outline-none text-xs text-[#8B7373] italic truncate" 
-                  />
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          </main>
+        </div>
+
+        {/* 하단 로딩 표시 (플로팅) */}
+        {isDataLoading && (
+          <div className="fixed bottom-6 right-6 bg-white p-3 rounded-full shadow-xl border border-[#E8D6D6]">
+            <Infinity size={24} className="text-[#C89B9B] animate-pulse" />
           </div>
-        </main>
+        )}
 
         <footer className="text-center py-4 text-[#D4B8B8] text-[9px]">
-          <p>© 2024 스룽 플래너 • 실시간 연동 중</p>
+          <p>© 2026 스룽 플래너 • 실시간 연동 중</p>
         </footer>
       </div>
     </div>
